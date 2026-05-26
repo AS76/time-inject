@@ -1,0 +1,21 @@
+{
+  "id": "time-inject",
+  "name": "Time Inject",
+  "description": "Injects current wall-clock time as prependSystemContext before every model call",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "hooks": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "timezone": {
+        "type": "string",
+        "description": "IANA timezone (es. Europe/London, Europe/Rome, America/Toronto)",
+        "default": "Europe/Rome"
+      }
+    }
+  }
+}

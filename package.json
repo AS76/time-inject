@@ -1,0 +1,14 @@
+{
+  "name": "time-inject",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
