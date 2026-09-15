@@ -1,12 +1,17 @@
 {
   "name": "time-inject",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "openclaw": {
     "extensions": [
       "./dist/index.js"
     ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

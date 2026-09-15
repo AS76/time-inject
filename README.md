@@ -1,66 +1,59 @@
 # 🕐 Time Inject — OpenClaw Plugin
 
-> **Injects reliable wall-clock time into every agent's system context.**
+> Injects an exact, timezone-aware wall-clock timestamp into every model call.
 
-[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin-%234b32c3)](https://openclaw.ai)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Time Inject started as a workaround for [OpenClaw issue #82968](https://github.com/openclaw/openclaw/issues/82968), where agents lacked a reliable agent-facing wall clock.
 
-## The Problem
+Modern OpenClaw now provides a native **Temporal Context** with the local date and timezone and points agents to `session_status` for exact current time. This plugin therefore has a narrower purpose: **make exact wall-clock time available directly in the system context on every prompt build**, with no extra tool call.
 
-**OpenClaw agents lack a reliable wall-clock time source.**
+## What it injects
 
-- Agents rely on session-start timestamps or model training cutoffs
-- Long-running sessions drift — agents think it's yesterday
-- No built-in mechanism to tell agents "this is the real current date and time"
-- [GitHub Issue #82968](https://github.com/openclaw/openclaw/issues/82968)
-
-For users who travel across timezones, ask about events, or rely on time-aware reasoning, this creates constant friction: agents give wrong dates, miscalculate deadlines, or need manual time correction every session.
-
-## The Solution
-
-A lightweight plugin that hooks into `before_prompt_build` and prepends the current wall-clock time to every agent's system prompt — **before** every single model call, not just at session start.
-
-```
-Oggi è martedì 26 maggio 2026, ore 17:30 (Europe/London)
-ISO UTC: 2026-05-26T15:30:00.000Z
+```text
+## Exact Wall-Clock Time
+UTC: 2026-09-15T14:41:12.345Z
+Local: 2026-09-15T16:41:12.345+02:00
+Time zone: Europe/Rome
+Use this block as the authoritative value of 'now' for this model call. Uptime/session age are elapsed-duration signals, not wall-clock time.
 ```
 
-### Why a Plugin?
+The output is intentionally language-neutral and machine-parseable.
 
-| Approach | Problem |
-|---|---|
-| Template in SOUL.md | Rendered once at session start, not per request |
-| Gateway injection | Modifies core code — overwritten on update |
-| **Plugin (this)** | Hooks into prompt build **per request**, survives updates, zero core changes |
+## Why keep it if OpenClaw has Temporal Context?
 
-## Features
+OpenClaw's native prompt context provides the **date** and **timezone**, while exact current time is tool-backed. Time Inject complements that behavior by adding the exact timestamp on every model call.
 
-- ✅ **Per-request accuracy** — time is injected before *every* model call
-- ✅ **Configurable timezone** — set it in `openclaw.json`, changes at runtime
-- ✅ **IANA validation** — rejects invalid timezones, falls back to `Europe/Rome`
-- ✅ **Minimal overhead** — pure `Intl` formatting, no dependencies
-- ✅ **Survives updates** — lives outside core, enabled by default
-- ✅ **Dual format** — human-readable localized string + ISO UTC for parsing
+Useful when you want:
+
+- exact time without a `session_status` tool call;
+- long-running sessions to always receive a fresh wall clock;
+- UTC and local timestamps together;
+- deterministic timestamps for deadline, recency, heartbeat, or log reasoning.
+
+If OpenClaw's native Temporal Context + `session_status` is sufficient for your setup, you do not need this plugin.
+
+## Timezone resolution
+
+Timezone precedence is:
+
+1. `plugins.entries.time-inject.config.timezone`
+2. OpenClaw `agents.defaults.userTimezone`
+3. host runtime timezone
+4. `UTC` as a final fallback
+
+Invalid plugin timezone values are ignored and logged as a warning.
 
 ## Installation
-
-1. **Clone or download** this plugin into your workspace:
 
 ```bash
 mkdir -p /root/.openclaw/workspace/main/plugins
 cd /root/.openclaw/workspace/main/plugins
-git clone <repo-url> time-inject
-```
-
-2. **Compile** (TypeScript required):
-
-```bash
+git clone https://github.com/AS76/time-inject.git
 cd time-inject
 npm install
-npx tsc
+npm run build
 ```
 
-3. **Enable** in `openclaw.json`:
+Then enable it in `openclaw.json`:
 
 ```json
 {
@@ -82,117 +75,40 @@ npx tsc
 }
 ```
 
-4. **Restart OpenClaw** and verify:
+The `timezone` override is optional. If omitted, Time Inject follows `agents.defaults.userTimezone` when configured.
+
+Restart OpenClaw and verify the plugin is enabled:
 
 ```bash
 openclaw plugins list
-# Should show: Time Inject │ time-inject │ openclaw │ enabled │ 1.0.0
-```
-
-## Configuration
-
-### `timezone` (string, optional)
-
-IANA timezone name. Default: `Europe/Rome`.
-
-| Value | When to use |
-|---|---|
-| `Europe/Rome` | Italy (CET/CEST) |
-| `Europe/London` | UK (GMT/BST) |
-| `America/Toronto` | Eastern Canada (YDD2 project) |
-| `America/New_York` | US East Coast (MTN1 project) |
-| `America/Los_Angeles` | US West Coast |
-| `Asia/Shanghai` | China (CST) |
-| `Asia/Kolkata` | India (IST) |
-
-Invalid timezones are rejected by IANA validation; the plugin falls back to `Europe/Rome`.
-
-## How It Works
-
-```
-┌─────────────┐     before_prompt_build     ┌──────────────┐
-│  OpenClaw   │ ──────────────────────▶     │ Time Inject  │
-│  Gateway    │                              │  Plugin      │
-└─────────────┘                              └──────┬───────┘
-                                                    │
-                                                    ▼
-                                          ┌──────────────────┐
-                                          │  new Date()       │
-                                          │  + IANA timezone  │
-                                          │  + Intl format    │
-                                          │  + ISO UTC str    │
-                                          └──────┬───────────┘
-                                                    │
-                                                    ▼
-                                          prependSystemContext:
-                                          "Oggi è martedì 26 maggio 2026,
-                                           ore 17:30 (Europe/London)
-                                           ISO UTC: 2026-05-26T15:30:00.000Z"
-```
-
-The hook uses `before_prompt_build` to return `prependSystemContext`, which is cached by the provider's prompt caching — minimal token cost.
-
-## Source Code
-
-```typescript
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-
-const DEFAULT_TZ = "Europe/Rome";
-
-function isValidTimezone(tz: string): boolean {
-  if (typeof (Intl as any).supportedValuesOf === "function") {
-    try {
-      return (Intl as any).supportedValuesOf("timeZone").includes(tz);
-    } catch { /* fall through */ }
-  }
-  try {
-    Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export default definePluginEntry({
-  id: "time-inject",
-  name: "Time Inject",
-  description: "Injects current wall-clock time as prependSystemContext...",
-  register(api) {
-    api.on("before_prompt_build", (_event, ctx) => {
-      const now = new Date();
-      const pluginConfig = (ctx as any).pluginConfig;
-      const rawTz = pluginConfig?.timezone;
-      const tz = rawTz && isValidTimezone(rawTz) ? rawTz : DEFAULT_TZ;
-
-      const raw = new Intl.DateTimeFormat("it-IT", {
-        timeZone: tz,
-        weekday: "long", year: "numeric", month: "long",
-        day: "numeric", hour: "2-digit", minute: "2-digit",
-      }).format(now);
-
-      const formatted = `Oggi è ${raw.replace(" alle ", ", ore ")} (${tz})`;
-
-      return {
-        prependSystemContext: `${formatted}\nISO UTC: ${now.toISOString()}`,
-      };
-    });
-  },
-});
 ```
 
 ## Development
 
 ```bash
-npm install        # installs TypeScript
-npx tsc            # compiles src/ → dist/
-npx tsc --watch    # watch mode
+npm install
+npm run build
+npm run typecheck
+npm test
 ```
+
+The clock formatter is split from the OpenClaw adapter so DST/offset behavior can be tested independently.
+
+## Design notes
+
+- Uses `api.pluginConfig`, the plugin configuration exposed by the OpenClaw SDK.
+- Hooks `before_prompt_build`, so the clock is regenerated for each model call.
+- Uses `Intl.DateTimeFormat` with an IANA timezone and an ISO-8601 calendar.
+- Includes the correct local UTC offset, including daylight-saving transitions.
+- Keeps uptime/session age explicitly separate from wall-clock time.
+- Has no runtime dependencies beyond OpenClaw and the JavaScript runtime.
 
 ## Related
 
-- [GitHub Issue #82968 — Agents need reliable wall-clock time](https://github.com/openclaw/openclaw/issues/82968)
-- [OpenClaw Plugin SDK Docs](https://docs.openclaw.ai/plugins/sdk-overview)
+- [OpenClaw issue #82968](https://github.com/openclaw/openclaw/issues/82968)
+- [OpenClaw date/time documentation](https://docs.openclaw.ai/date-time)
+- [OpenClaw plugin hooks](https://docs.openclaw.ai/plugins/hooks)
 
 ## License
 
-MIT — do what you want, contributions welcome.
+MIT.
